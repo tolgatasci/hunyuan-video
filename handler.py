@@ -331,21 +331,41 @@ def handler(job):
 
         if mode == "avatar":
             # Avatar mode: image + audio → talking video
+            # Supports both URL and base64 input
             image_url = job_input.get("image_url")
             audio_url = job_input.get("audio_url")
+            image_base64 = job_input.get("image_base64")
+            audio_base64 = job_input.get("audio_base64")
 
-            if not image_url or not audio_url:
-                return {"error": "Avatar mode requires image_url and audio_url"}
-
-            # Download files
             image_path = TEMP_DIR / "input_image.jpg"
             audio_path = TEMP_DIR / "input_audio.wav"
             output_path = OUTPUT_DIR / "avatar_output.mp4"
 
-            if not download_file(image_url, image_path):
-                return {"error": "Failed to download image"}
-            if not download_file(audio_url, audio_path):
-                return {"error": "Failed to download audio"}
+            # Handle image input (URL or base64)
+            if image_base64:
+                print("  Using base64 image input")
+                image_data = base64.b64decode(image_base64)
+                with open(image_path, 'wb') as f:
+                    f.write(image_data)
+                print(f"  Image saved: {len(image_data)//1024}KB")
+            elif image_url:
+                if not download_file(image_url, image_path):
+                    return {"error": "Failed to download image"}
+            else:
+                return {"error": "Avatar mode requires image_url or image_base64"}
+
+            # Handle audio input (URL or base64)
+            if audio_base64:
+                print("  Using base64 audio input")
+                audio_data = base64.b64decode(audio_base64)
+                with open(audio_path, 'wb') as f:
+                    f.write(audio_data)
+                print(f"  Audio saved: {len(audio_data)//1024}KB")
+            elif audio_url:
+                if not download_file(audio_url, audio_path):
+                    return {"error": "Failed to download audio"}
+            else:
+                return {"error": "Avatar mode requires audio_url or audio_base64"}
 
             result = generate_avatar(
                 image_path, audio_path, output_path,
