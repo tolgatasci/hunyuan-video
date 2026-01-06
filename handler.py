@@ -1,12 +1,14 @@
 """
 HunyuanVideo Multi-Model RunPod Serverless Handler
-Supports: Avatar, I2V (Image-to-Video), T2V (Text-to-Video)
+Supports: Avatar, I2V (Image-to-Video), T2V (Text-to-Video), Disk Management
 
 Usage:
-  - mode: "avatar" | "i2v" | "t2v"
-  - For avatar: image_url + audio_url
-  - For i2v: image_url + prompt
+  - mode: "avatar" | "i2v" | "t2v" | "disk_check" | "cleanup"
+  - For avatar: image_url/image_base64 + audio_url/audio_base64
+  - For i2v: image_url/image_base64 + prompt
   - For t2v: prompt only
+  - For disk_check: no params needed
+  - For cleanup: optional clear_hf_cache=true
 """
 
 import os
@@ -18,16 +20,60 @@ import tempfile
 import subprocess
 import requests
 import runpod
+import shutil
+import gc
 from pathlib import Path
 
 # Globals
 MODEL_BASE = os.environ.get("MODEL_BASE", "/runpod-volume/models/hunyuan")
 TEMP_DIR = Path("/app/temp")
 OUTPUT_DIR = Path("/app/output")
+HF_CACHE_DIR = Path.home() / ".cache" / "huggingface"
 
 # Ensure directories exist
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def get_disk_usage():
+    """Get disk usage info"""
+    try:
+        total, used, free = shutil.disk_usage("/")
+        return {
+            "total_gb": total / (1024**3),
+            "used_gb": used / (1024**3),
+            "free_gb": free / (1024**3),
+            "used_percent": (used / total) * 100
+        }
+    except Exception as e:
+        print(f"Disk usage check error: {e}")
+        return None
+
+
+def cleanup_temp_files():
+    """Clean up temporary files"""
+    try:
+        # Clean temp and output directories
+        for f in TEMP_DIR.glob("*"):
+            f.unlink()
+        for f in OUTPUT_DIR.glob("*"):
+            f.unlink()
+
+        # Clean Python garbage
+        gc.collect()
+
+        # Try to free GPU memory
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+        except:
+            pass
+
+        print("  Cleanup completed")
+    except Exception as e:
+        print(f"  Cleanup error: {e}")
 
 
 def download_file(url: str, save_path: Path) -> bool:
@@ -93,11 +139,11 @@ def generate_avatar(image_path: Path, audio_path: Path, output_path: Path, **kwa
     csv_content = f"videoid,image,audio,prompt,fps\n1,{image_path},{audio_path},A person speaking naturally,25"
     csv_path.write_text(csv_content)
 
-    # Get parameters
+    # Get parameters from request (passed by handler)
     num_frames = kwargs.get("num_frames", 129)
-    image_size = kwargs.get("image_size", 704)
+    image_size = kwargs.get("image_size", 704)  # 704 for quality, 512 for speed
     cfg_scale = kwargs.get("cfg_scale", 7.5)
-    infer_steps = kwargs.get("infer_steps", 50)
+    infer_steps = kwargs.get("infer_steps", 50)  # 50 for quality, 30 for speed
     seed = kwargs.get("seed", 42)
     use_fp8 = kwargs.get("use_fp8", True)
     cpu_offload = kwargs.get("cpu_offload", False)
@@ -142,6 +188,8 @@ def generate_avatar(image_path: Path, audio_path: Path, output_path: Path, **kwa
         env["CPU_OFFLOAD"] = "1"
 
     print(f"Running Avatar generation...")
+    print(f"  image_size={image_size}, infer_steps={infer_steps}, num_frames={num_frames}")
+    print(f"  use_fp8={use_fp8}, cpu_offload={cpu_offload}")
     print(f"Command: {' '.join(cmd)}")
 
     start = time.time()
@@ -323,14 +371,18 @@ def handler(job):
     print("=" * 60)
 
     try:
+        # Check disk space before starting
+        disk = get_disk_usage()
+        if disk:
+            print(f"  Disk: {disk['free_gb']:.1f}GB free / {disk['total_gb']:.1f}GB total ({disk['used_percent']:.1f}% used)")
+            if disk['free_gb'] < 5:
+                return {"error": f"Low disk space: only {disk['free_gb']:.1f}GB free. Please clear the volume."}
+
         # Download models if needed
         download_models_if_needed(mode)
 
         # Clean temp directory
-        for f in TEMP_DIR.glob("*"):
-            f.unlink()
-        for f in OUTPUT_DIR.glob("*"):
-            f.unlink()
+        cleanup_temp_files()
 
         if mode == "avatar":
             # Avatar mode: image + audio → talking video
@@ -383,17 +435,26 @@ def handler(job):
 
         elif mode == "i2v":
             # Image-to-Video mode
+            # Supports both URL and base64 input
             image_url = job_input.get("image_url")
+            image_base64 = job_input.get("image_base64")
             prompt = job_input.get("prompt", "")
-
-            if not image_url:
-                return {"error": "I2V mode requires image_url"}
 
             image_path = TEMP_DIR / "input_image.jpg"
             output_path = OUTPUT_DIR / "i2v_output.mp4"
 
-            if not download_file(image_url, image_path):
-                return {"error": "Failed to download image"}
+            # Handle image input (URL or base64)
+            if image_base64:
+                print("  Using base64 image input for I2V")
+                image_data = base64.b64decode(image_base64)
+                with open(image_path, 'wb') as f:
+                    f.write(image_data)
+                print(f"  Image saved: {len(image_data)//1024}KB")
+            elif image_url:
+                if not download_file(image_url, image_path):
+                    return {"error": "Failed to download image"}
+            else:
+                return {"error": "I2V mode requires image_url or image_base64"}
 
             result = generate_i2v(
                 image_path, prompt, output_path,
@@ -423,8 +484,92 @@ def handler(job):
                 seed=job_input.get("seed", 42)
             )
 
+        elif mode == "disk_check":
+            # Disk check mode - returns disk usage info
+            disk = get_disk_usage()
+
+            # Also check specific directories
+            dir_sizes = {}
+            check_dirs = [
+                "/runpod-volume",
+                str(HF_CACHE_DIR),
+                "/app",
+                "/tmp"
+            ]
+
+            for d in check_dirs:
+                try:
+                    result = subprocess.run(
+                        ["du", "-sh", d],
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
+                    if result.returncode == 0:
+                        size = result.stdout.strip().split()[0]
+                        dir_sizes[d] = size
+                except:
+                    dir_sizes[d] = "unknown"
+
+            return {
+                "success": True,
+                "disk": disk,
+                "directories": dir_sizes,
+                "message": "Disk check completed"
+            }
+
+        elif mode == "cleanup":
+            # Force cleanup mode - clears cache and temp files
+            disk_before = get_disk_usage()
+            cleaned = []
+
+            # Clean temp directories
+            cleanup_temp_files()
+            cleaned.append("temp files")
+
+            # Clean HuggingFace cache (optional, controlled by parameter)
+            if job_input.get("clear_hf_cache", False):
+                try:
+                    if HF_CACHE_DIR.exists():
+                        shutil.rmtree(HF_CACHE_DIR)
+                        HF_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                        cleaned.append("HuggingFace cache")
+                except Exception as e:
+                    print(f"  HF cache cleanup error: {e}")
+
+            # Clean /tmp
+            try:
+                for f in Path("/tmp").glob("*"):
+                    if f.is_file():
+                        f.unlink()
+                    elif f.is_dir() and f.name.startswith("tmp"):
+                        shutil.rmtree(f)
+                cleaned.append("/tmp files")
+            except Exception as e:
+                print(f"  /tmp cleanup error: {e}")
+
+            disk_after = get_disk_usage()
+            freed = disk_after['free_gb'] - disk_before['free_gb'] if disk_before and disk_after else 0
+
+            return {
+                "success": True,
+                "disk_before": disk_before,
+                "disk_after": disk_after,
+                "freed_gb": round(freed, 2),
+                "cleaned": cleaned,
+                "message": f"Cleanup completed, freed {freed:.2f}GB"
+            }
+
         else:
-            return {"error": f"Unknown mode: {mode}. Use 'avatar', 'i2v', or 't2v'"}
+            return {"error": f"Unknown mode: {mode}. Use 'avatar', 'i2v', 't2v', 'disk_check', or 'cleanup'"}
+
+        # Post-job cleanup
+        cleanup_temp_files()
+
+        # Check disk space after job
+        disk = get_disk_usage()
+        if disk:
+            print(f"  Disk after: {disk['free_gb']:.1f}GB free ({disk['used_percent']:.1f}% used)")
 
         print("=" * 60)
         print(f"Job completed: {job_id}")
@@ -436,6 +581,10 @@ def handler(job):
         print(f"Error: {e}")
         import traceback
         traceback.print_exc()
+
+        # Cleanup on error
+        cleanup_temp_files()
+
         return {"error": str(e)}
 
 
