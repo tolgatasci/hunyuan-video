@@ -89,8 +89,8 @@ def generate_avatar(image_path: Path, audio_path: Path, output_path: Path, **kwa
     # Create CSV input file
     csv_path = TEMP_DIR / "avatar_input.csv"
 
-    # CSV format for HunyuanVideo-Avatar
-    csv_content = f"image_path,audio_path,text\n{image_path},{audio_path},A person speaking naturally"
+    # CSV format for HunyuanVideo-Avatar: videoid,image,audio,prompt,fps
+    csv_content = f"videoid,image,audio,prompt,fps\n1,{image_path},{audio_path},A person speaking naturally,25"
     csv_path.write_text(csv_content)
 
     # Get parameters
