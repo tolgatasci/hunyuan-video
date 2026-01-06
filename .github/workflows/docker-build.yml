@@ -1,12 +1,13 @@
 name: Build and Push Docker Image
-
   on:
     push:
-      branches: [main, master]
+      branches:
+        - main
+        - master
       paths:
-        - 'Dockerfile'
-        - 'handler.py'
-        - '.github/workflows/docker-build.yml'
+        - Dockerfile
+        - handler.py
+        - .github/workflows/docker-build.yml
     workflow_dispatch:
 
   env:
@@ -42,4 +43,4 @@ name: Build and Push Docker Image
             cache-to: type=gha,mode=max
 
         - name: Image digest
-          run: echo "Image pushed - ${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}"
+          run: echo "Image pushed"
