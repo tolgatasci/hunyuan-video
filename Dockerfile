@@ -11,6 +11,17 @@ ENV MODEL_BASE=/runpod-volume/models/hunyuan
 
 WORKDIR /app
 
+# Install system dependencies for OpenCV
+RUN apt-get update && apt-get install -y \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install additional dependencies
 RUN pip install --no-cache-dir \
     runpod \
@@ -18,7 +29,8 @@ RUN pip install --no-cache-dir \
     cloudinary \
     requests \
     aiohttp \
-    aiofiles
+    aiofiles \
+    opencv-python-headless
 
 # Clone HunyuanVideo-Avatar for avatar support
 RUN git clone https://github.com/Tencent-Hunyuan/HunyuanVideo-Avatar.git /app/HunyuanVideo-Avatar && \
