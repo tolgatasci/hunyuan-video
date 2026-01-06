@@ -109,6 +109,9 @@ def generate_avatar(image_path: Path, audio_path: Path, output_path: Path, **kwa
     else:
         checkpoint_path += "mp_rank_00_model_states.pt"
 
+    # MODEL_BASE should point to the directory containing ckpts/
+    avatar_model_base = f"{MODEL_BASE}/hunyuan-avatar"
+
     cmd = [
         "python3", "/app/HunyuanVideo-Avatar/hymm_sp/sample_gpu_poor.py",
         "--input", str(csv_path),
@@ -130,9 +133,9 @@ def generate_avatar(image_path: Path, audio_path: Path, output_path: Path, **kwa
     if cpu_offload:
         cmd.append("--cpu-offload")
 
-    # Set environment
+    # Set environment - MODEL_BASE must point to directory containing ckpts/
     env = os.environ.copy()
-    env["MODEL_BASE"] = MODEL_BASE
+    env["MODEL_BASE"] = avatar_model_base
     env["DISABLE_SP"] = "1"
     env["PYTHONPATH"] = "/app/HunyuanVideo-Avatar"
     if cpu_offload:
