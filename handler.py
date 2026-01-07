@@ -118,15 +118,18 @@ def download_models_if_needed(mode: str):
 
     elif mode == "i2v":
         # Download HunyuanVideo-I2V weights from tencent/HunyuanVideo-I2V
-        # Repo structure: hunyuan-video-i2v-720p/transformers/mp_rank_00_model_states.pt (NO ckpts folder!)
-        i2v_path = model_path / "hunyuan-i2v"
-        i2v_model_file = i2v_path / "hunyuan-video-i2v-720p" / "transformers" / "mp_rank_00_model_states.pt"
+        # Script expects: model_base/ckpts/hunyuan-video-i2v-720p/transformers/...
+        # So download INTO ckpts/ folder
+        i2v_base = model_path / "hunyuan-i2v"
+        i2v_ckpts = i2v_base / "ckpts"
+        i2v_model_file = i2v_ckpts / "hunyuan-video-i2v-720p" / "transformers" / "mp_rank_00_model_states.pt"
 
         if not i2v_model_file.exists():
             print("Downloading HunyuanVideo-I2V model from tencent/HunyuanVideo-I2V...")
+            i2v_ckpts.mkdir(parents=True, exist_ok=True)
             snapshot_download(
                 repo_id="tencent/HunyuanVideo-I2V",
-                local_dir=str(i2v_path),
+                local_dir=str(i2v_ckpts),
                 token=hf_token
             )
             print("I2V model downloaded!")
@@ -235,18 +238,18 @@ def generate_avatar(image_path: Path, audio_path: Path, output_path: Path, **kwa
 
 def setup_i2v_models():
     """Setup I2V models - check if they exist at expected location"""
-    # I2V models downloaded from tencent/HunyuanVideo-I2V
-    # Path: MODEL_BASE/hunyuan-i2v/hunyuan-video-i2v-720p/ (NO ckpts folder!)
+    # I2V models downloaded to: MODEL_BASE/hunyuan-i2v/ckpts/hunyuan-video-i2v-720p/
+    # Script expects --model-base to point to MODEL_BASE/hunyuan-i2v (which contains ckpts/)
 
-    i2v_path = Path(MODEL_BASE) / "hunyuan-i2v"
-    model_file = i2v_path / "hunyuan-video-i2v-720p" / "transformers" / "mp_rank_00_model_states.pt"
+    i2v_base = Path(MODEL_BASE) / "hunyuan-i2v"
+    model_file = i2v_base / "ckpts" / "hunyuan-video-i2v-720p" / "transformers" / "mp_rank_00_model_states.pt"
 
     if model_file.exists():
         print(f"  I2V model found: {model_file}")
-        return str(i2v_path)
+        return str(i2v_base)
 
     print(f"  I2V model NOT found. Will be downloaded by download_models_if_needed()")
-    return str(i2v_path)
+    return str(i2v_base)
 
 
 def generate_i2v(image_path: Path, prompt: str, output_path: Path, **kwargs) -> dict:
