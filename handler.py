@@ -117,23 +117,59 @@ def download_models_if_needed(mode: str):
             print("Avatar model downloaded!")
 
     elif mode == "i2v":
-        # Download HunyuanVideo-I2V weights from tencent/HunyuanVideo-I2V
-        # Script expects: model_base/ckpts/hunyuan-video-i2v-720p/transformers/...
-        # So download INTO ckpts/ folder
-        i2v_base = model_path / "hunyuan-i2v"
-        i2v_ckpts = i2v_base / "ckpts"
-        i2v_model_file = i2v_ckpts / "hunyuan-video-i2v-720p" / "transformers" / "mp_rank_00_model_states.pt"
+        # HunyuanVideo-I2V requires 3 separate model downloads:
+        # 1. tencent/HunyuanVideo-I2V → ckpts/ (main I2V model)
+        # 2. xtuner/llava-llama-3-8b-v1_1-transformers → ckpts/text_encoder_i2v/ (LLaVA text encoder)
+        # 3. openai/clip-vit-large-patch14 → ckpts/text_encoder_2/ (CLIP encoder)
+        #
+        # Expected structure after download:
+        # MODEL_BASE/ckpts/
+        # ├── hunyuan-video-i2v-720p/transformers/mp_rank_00_model_states.pt
+        # ├── text_encoder_i2v/  (LLaVA)
+        # └── text_encoder_2/    (CLIP)
 
+        # Clean up old incorrect folder structure if exists
+        old_i2v_path = model_path / "hunyuan-i2v"
+        if old_i2v_path.exists():
+            print(f"Removing old incorrect I2V folder: {old_i2v_path}")
+            import shutil
+            shutil.rmtree(old_i2v_path)
+
+        ckpts_path = model_path / "ckpts"
+        i2v_model_file = ckpts_path / "hunyuan-video-i2v-720p" / "transformers" / "mp_rank_00_model_states.pt"
+        text_encoder_i2v = ckpts_path / "text_encoder_i2v"
+        text_encoder_2 = ckpts_path / "text_encoder_2"
+
+        # Download main I2V model
         if not i2v_model_file.exists():
-            print("Downloading HunyuanVideo-I2V model from tencent/HunyuanVideo-I2V...")
-            i2v_ckpts.mkdir(parents=True, exist_ok=True)
-            # Public repo - no token needed
+            print("Downloading HunyuanVideo-I2V main model from tencent/HunyuanVideo-I2V...")
+            ckpts_path.mkdir(parents=True, exist_ok=True)
             snapshot_download(
                 repo_id="tencent/HunyuanVideo-I2V",
-                local_dir=str(i2v_ckpts),
-                token=None  # Public repo, no auth needed
+                local_dir=str(ckpts_path),
+                token=None
             )
-            print("I2V model downloaded!")
+            print("I2V main model downloaded!")
+
+        # Download LLaVA text encoder
+        if not text_encoder_i2v.exists():
+            print("Downloading LLaVA text encoder from xtuner/llava-llama-3-8b-v1_1-transformers...")
+            snapshot_download(
+                repo_id="xtuner/llava-llama-3-8b-v1_1-transformers",
+                local_dir=str(text_encoder_i2v),
+                token=None
+            )
+            print("LLaVA text encoder downloaded!")
+
+        # Download CLIP text encoder
+        if not text_encoder_2.exists():
+            print("Downloading CLIP text encoder from openai/clip-vit-large-patch14...")
+            snapshot_download(
+                repo_id="openai/clip-vit-large-patch14",
+                local_dir=str(text_encoder_2),
+                token=None
+            )
+            print("CLIP text encoder downloaded!")
 
     elif mode == "t2v":
         # Download base HunyuanVideo T2V weights
@@ -239,18 +275,27 @@ def generate_avatar(image_path: Path, audio_path: Path, output_path: Path, **kwa
 
 def setup_i2v_models():
     """Setup I2V models - check if they exist at expected location"""
-    # I2V models downloaded to: MODEL_BASE/hunyuan-i2v/ckpts/hunyuan-video-i2v-720p/
-    # Script expects --model-base to point to MODEL_BASE/hunyuan-i2v (which contains ckpts/)
+    # I2V models downloaded to: MODEL_BASE/ckpts/
+    # Structure:
+    #   MODEL_BASE/ckpts/hunyuan-video-i2v-720p/transformers/...
+    #   MODEL_BASE/ckpts/text_encoder_i2v/
+    #   MODEL_BASE/ckpts/text_encoder_2/
+    #
+    # IMPORTANT: The script's constants.py uses MODEL_BASE env var for paths:
+    #   MODEL_BASE/text_encoder_i2v, MODEL_BASE/text_encoder_2
+    # So we return MODEL_BASE/ckpts (not MODEL_BASE)
 
-    i2v_base = Path(MODEL_BASE) / "hunyuan-i2v"
-    model_file = i2v_base / "ckpts" / "hunyuan-video-i2v-720p" / "transformers" / "mp_rank_00_model_states.pt"
+    ckpts_path = Path(MODEL_BASE) / "ckpts"
+    model_file = ckpts_path / "hunyuan-video-i2v-720p" / "transformers" / "mp_rank_00_model_states.pt"
+    text_encoder_i2v = ckpts_path / "text_encoder_i2v"
+    text_encoder_2 = ckpts_path / "text_encoder_2"
 
-    if model_file.exists():
-        print(f"  I2V model found: {model_file}")
-        return str(i2v_base)
+    if model_file.exists() and text_encoder_i2v.exists() and text_encoder_2.exists():
+        print(f"  I2V models found at: {ckpts_path}")
+        return str(ckpts_path)
 
-    print(f"  I2V model NOT found. Will be downloaded by download_models_if_needed()")
-    return str(i2v_base)
+    print(f"  I2V models NOT complete. Will be downloaded by download_models_if_needed()")
+    return str(ckpts_path)
 
 
 def generate_i2v(image_path: Path, prompt: str, output_path: Path, **kwargs) -> dict:
@@ -273,13 +318,11 @@ def generate_i2v(image_path: Path, prompt: str, output_path: Path, **kwargs) -> 
 
     if not models_root or not os.path.exists(models_root):
         # Last resort - check all possible locations
+        # Note: models_root should be the ckpts folder itself (contains text_encoder_i2v, etc.)
         possible_paths = [
             f"{MODEL_BASE}/ckpts",
-            f"{MODEL_BASE}/hunyuan-avatar/ckpts",
-            f"{MODEL_BASE}/hunyuan-video/ckpts",
-            "/runpod-volume/ckpts",
             "/runpod-volume/models/hunyuan/ckpts",
-            "/runpod-volume/models/hunyuan/hunyuan-video/ckpts"
+            "/runpod-volume/ckpts"
         ]
 
         for path in possible_paths:
@@ -304,9 +347,12 @@ def generate_i2v(image_path: Path, prompt: str, output_path: Path, **kwargs) -> 
     except Exception as e:
         print(f"  Could not list models_root: {e}")
 
-    # HunyuanVideo-I2V uses --model-base which should contain hunyuan-video-i2v-720p/
-    # models_root from setup_i2v_models() is MODEL_BASE/hunyuan-i2v
-    model_base = models_root  # /runpod-volume/models/hunyuan/hunyuan-i2v
+    # HunyuanVideo-I2V expects MODEL_BASE env var to point to ckpts folder containing:
+    #   - hunyuan-video-i2v-720p/transformers/mp_rank_00_model_states.pt
+    #   - text_encoder_i2v/ (LLaVA)
+    #   - text_encoder_2/ (CLIP)
+    # models_root from setup_i2v_models() is MODEL_BASE/ckpts
+    model_base = models_root  # /runpod-volume/models/hunyuan/ckpts
 
     cmd = [
         "python3", "/app/HunyuanVideo-I2V/sample_image2video.py",
@@ -328,10 +374,10 @@ def generate_i2v(image_path: Path, prompt: str, output_path: Path, **kwargs) -> 
 
     env = os.environ.copy()
     env["PYTHONPATH"] = "/app/HunyuanVideo-I2V"
-    env["MODEL_BASE"] = model_base  # Also set as env var
+    env["MODEL_BASE"] = model_base  # Script's constants.py uses this for text encoder paths
 
-    # Working directory should be where the script can find models
-    work_dir = model_base
+    # Working directory should be the script directory
+    work_dir = "/app/HunyuanVideo-I2V"
 
     print(f"  Command: python3 sample_image2video.py ...")
     print(f"  Working dir: {work_dir}")
