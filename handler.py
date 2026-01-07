@@ -358,6 +358,9 @@ def generate_i2v(image_path: Path, prompt: str, output_path: Path, **kwargs) -> 
     # Build absolute path for I2V model weights
     i2v_dit_weight = f"{model_base}/hunyuan-video-i2v-720p/transformers/mp_rank_00_model_states.pt"
 
+    # Get cfg_scale from kwargs
+    cfg_scale = kwargs.get("cfg_scale", 6.0)
+
     cmd = [
         "python3", "/app/HunyuanVideo-I2V/sample_image2video.py",
         "--model-base", model_base,
@@ -369,6 +372,7 @@ def generate_i2v(image_path: Path, prompt: str, output_path: Path, **kwargs) -> 
         "--video-length", str(num_frames),
         "--flow-shift", str(flow_shift),
         "--infer-steps", str(infer_steps),
+        "--embedded-cfg-scale", str(cfg_scale),  # Required for guidance distilled model
         "--seed", str(seed),
         "--use-cpu-offload",
         "--save-path", str(OUTPUT_DIR)
@@ -632,6 +636,7 @@ def handler(job):
                 stability=job_input.get("stability", True),
                 flow_shift=job_input.get("flow_shift", 7.0),
                 infer_steps=job_input.get("infer_steps", 30),  # 30 for speed
+                cfg_scale=job_input.get("cfg_scale", 6.0),  # Required for guidance distilled model
                 seed=job_input.get("seed", 42),
                 fps=job_input.get("fps", 25)
             )
