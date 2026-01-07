@@ -354,9 +354,13 @@ def generate_i2v(image_path: Path, prompt: str, output_path: Path, **kwargs) -> 
     # models_root from setup_i2v_models() is MODEL_BASE/ckpts
     model_base = models_root  # /runpod-volume/models/hunyuan/ckpts
 
+    # Build absolute path for I2V model weights
+    i2v_dit_weight = f"{model_base}/hunyuan-video-i2v-720p/transformers/mp_rank_00_model_states.pt"
+
     cmd = [
         "python3", "/app/HunyuanVideo-I2V/sample_image2video.py",
         "--model-base", model_base,
+        "--i2v-dit-weight", i2v_dit_weight,  # Absolute path to avoid relative path issues
         "--prompt", prompt,
         "--i2v-mode",
         "--i2v-image-path", str(image_path),
