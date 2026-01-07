@@ -117,10 +117,10 @@ def download_models_if_needed(mode: str):
             print("Avatar model downloaded!")
 
     elif mode == "i2v":
-        # Download HunyuanVideo-I2V weights from SEPARATE repo
-        # Repo: tencent/HunyuanVideo-I2V (NOT tencent/HunyuanVideo!)
+        # Download HunyuanVideo-I2V weights from tencent/HunyuanVideo-I2V
+        # Repo structure: hunyuan-video-i2v-720p/transformers/mp_rank_00_model_states.pt (NO ckpts folder!)
         i2v_path = model_path / "hunyuan-i2v"
-        i2v_model_file = i2v_path / "ckpts" / "hunyuan-video-i2v-720p" / "transformers" / "mp_rank_00_model_states.pt"
+        i2v_model_file = i2v_path / "hunyuan-video-i2v-720p" / "transformers" / "mp_rank_00_model_states.pt"
 
         if not i2v_model_file.exists():
             print("Downloading HunyuanVideo-I2V model from tencent/HunyuanVideo-I2V...")
@@ -130,13 +130,6 @@ def download_models_if_needed(mode: str):
                 token=hf_token
             )
             print("I2V model downloaded!")
-
-            # Create symlink so ckpts is at MODEL_BASE/ckpts
-            ckpts_link = model_path / "ckpts"
-            i2v_ckpts = i2v_path / "ckpts"
-            if i2v_ckpts.exists() and not ckpts_link.exists():
-                os.symlink(i2v_ckpts, ckpts_link)
-                print(f"Created symlink: {ckpts_link} -> {i2v_ckpts}")
 
     elif mode == "t2v":
         # Download base HunyuanVideo T2V weights
@@ -243,30 +236,17 @@ def generate_avatar(image_path: Path, audio_path: Path, output_path: Path, **kwa
 def setup_i2v_models():
     """Setup I2V models - check if they exist at expected location"""
     # I2V models downloaded from tencent/HunyuanVideo-I2V
-    # Downloaded to: MODEL_BASE/hunyuan-i2v/ckpts/hunyuan-video-i2v-720p/
-    # Symlinked to: MODEL_BASE/ckpts/
+    # Path: MODEL_BASE/hunyuan-i2v/hunyuan-video-i2v-720p/ (NO ckpts folder!)
 
-    # Check symlink first
-    ckpts_link = Path(MODEL_BASE) / "ckpts"
-    if ckpts_link.exists():
-        model_file = ckpts_link / "hunyuan-video-i2v-720p" / "transformers" / "mp_rank_00_model_states.pt"
-        if model_file.exists():
-            print(f"  I2V model found via symlink: {model_file}")
-            return str(ckpts_link)
+    i2v_path = Path(MODEL_BASE) / "hunyuan-i2v"
+    model_file = i2v_path / "hunyuan-video-i2v-720p" / "transformers" / "mp_rank_00_model_states.pt"
 
-    # Check direct path
-    i2v_ckpts = Path(MODEL_BASE) / "hunyuan-i2v" / "ckpts"
-    model_file = i2v_ckpts / "hunyuan-video-i2v-720p" / "transformers" / "mp_rank_00_model_states.pt"
     if model_file.exists():
         print(f"  I2V model found: {model_file}")
-        # Create symlink if not exists
-        if not ckpts_link.exists():
-            os.symlink(i2v_ckpts, ckpts_link)
-            print(f"  Created symlink: {ckpts_link} -> {i2v_ckpts}")
-        return str(ckpts_link)
+        return str(i2v_path)
 
     print(f"  I2V model NOT found. Will be downloaded by download_models_if_needed()")
-    return str(ckpts_link)
+    return str(i2v_path)
 
 
 def generate_i2v(image_path: Path, prompt: str, output_path: Path, **kwargs) -> dict:
@@ -320,9 +300,9 @@ def generate_i2v(image_path: Path, prompt: str, output_path: Path, **kwargs) -> 
     except Exception as e:
         print(f"  Could not list models_root: {e}")
 
-    # HunyuanVideo-I2V uses --model-base which should contain ckpts/ folder
-    # models_root is already ckpts path, so model_base is its parent
-    model_base = MODEL_BASE  # /runpod-volume/models/hunyuan - contains ckpts/
+    # HunyuanVideo-I2V uses --model-base which should contain hunyuan-video-i2v-720p/
+    # models_root from setup_i2v_models() is MODEL_BASE/hunyuan-i2v
+    model_base = models_root  # /runpod-volume/models/hunyuan/hunyuan-i2v
 
     cmd = [
         "python3", "/app/HunyuanVideo-I2V/sample_image2video.py",
