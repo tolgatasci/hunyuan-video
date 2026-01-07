@@ -116,17 +116,45 @@ def download_models_if_needed(mode: str):
             )
             print("Avatar model downloaded!")
 
-    elif mode in ["i2v", "t2v"]:
-        # Download base HunyuanVideo weights
-        base_path = model_path / "hunyuan-video"
-        if not base_path.exists():
-            print("Downloading HunyuanVideo model...")
+    elif mode == "i2v":
+        # Download HunyuanVideo-I2V weights
+        # I2V needs: ckpts/hunyuan-video-i2v-720p/transformers/mp_rank_00_model_states.pt
+        i2v_ckpts = model_path / "ckpts" / "hunyuan-video-i2v-720p"
+        i2v_model_file = i2v_ckpts / "transformers" / "mp_rank_00_model_states.pt"
+
+        if not i2v_model_file.exists():
+            print("Downloading HunyuanVideo-I2V model...")
+            # Download from HunyuanVideo repo - I2V variant
+            try:
+                snapshot_download(
+                    repo_id="tencent/HunyuanVideo",
+                    local_dir=str(model_path),
+                    token=hf_token,
+                    allow_patterns=["ckpts/hunyuan-video-i2v*/**", "ckpts/llava*/**", "ckpts/text_encoder*/**"]
+                )
+                print("I2V model downloaded!")
+            except Exception as e:
+                print(f"I2V download error: {e}")
+                # Try alternative - full download
+                print("Trying full model download...")
+                snapshot_download(
+                    repo_id="tencent/HunyuanVideo",
+                    local_dir=str(model_path),
+                    token=hf_token
+                )
+                print("Full model downloaded!")
+
+    elif mode == "t2v":
+        # Download base HunyuanVideo T2V weights
+        t2v_ckpts = model_path / "ckpts" / "hunyuan-video-t2v-720p"
+        if not t2v_ckpts.exists():
+            print("Downloading HunyuanVideo T2V model...")
             snapshot_download(
                 repo_id="tencent/HunyuanVideo",
-                local_dir=str(base_path),
+                local_dir=str(model_path),
                 token=hf_token
             )
-            print("Base model downloaded!")
+            print("T2V model downloaded!")
 
 
 def generate_avatar(image_path: Path, audio_path: Path, output_path: Path, **kwargs) -> dict:
@@ -219,50 +247,32 @@ def generate_avatar(image_path: Path, audio_path: Path, output_path: Path, **kwa
 
 
 def setup_i2v_models():
-    """Setup I2V models - download if needed, create symlinks"""
-    from huggingface_hub import snapshot_download
+    """Setup I2V models - check if they exist at expected location"""
+    # I2V models are downloaded by download_models_if_needed()
+    # Expected path: MODEL_BASE/ckpts/hunyuan-video-i2v-720p/
 
-    hf_token = os.environ.get("HF_TOKEN")
-
-    # I2V models path
     i2v_ckpts = Path(MODEL_BASE) / "ckpts"
+    i2v_model = i2v_ckpts / "hunyuan-video-i2v-720p" / "transformers" / "mp_rank_00_model_states.pt"
 
-    # Check if models already exist
-    if i2v_ckpts.exists() and any(i2v_ckpts.iterdir()):
-        print(f"  I2V models found at: {i2v_ckpts}")
+    if i2v_model.exists():
+        print(f"  I2V model found: {i2v_model}")
         return str(i2v_ckpts)
 
-    # Check if Avatar ckpts exist (they have the base models)
-    avatar_ckpts = Path(MODEL_BASE) / "hunyuan-avatar" / "ckpts"
-    if avatar_ckpts.exists():
-        print(f"  Using Avatar models (symlink): {avatar_ckpts}")
-        # Create symlink
-        i2v_ckpts.parent.mkdir(parents=True, exist_ok=True)
-        if not i2v_ckpts.exists():
-            os.symlink(avatar_ckpts, i2v_ckpts)
-        return str(i2v_ckpts)
+    # Check alternative locations
+    alt_paths = [
+        Path(MODEL_BASE) / "ckpts",
+        Path("/runpod-volume/ckpts"),
+        Path("/runpod-volume/models/hunyuan/ckpts"),
+    ]
 
-    # Download HunyuanVideo base model
-    print("  Downloading HunyuanVideo base model for I2V...")
-    try:
-        download_path = snapshot_download(
-            repo_id="tencent/HunyuanVideo",
-            local_dir=str(Path(MODEL_BASE) / "hunyuan-video"),
-            token=hf_token,
-            ignore_patterns=["*.md", "*.txt"]
-        )
+    for path in alt_paths:
+        model_file = path / "hunyuan-video-i2v-720p" / "transformers" / "mp_rank_00_model_states.pt"
+        if model_file.exists():
+            print(f"  I2V model found at: {model_file}")
+            return str(path)
 
-        # Create symlink to ckpts
-        hv_ckpts = Path(download_path) / "ckpts"
-        if hv_ckpts.exists() and not i2v_ckpts.exists():
-            i2v_ckpts.parent.mkdir(parents=True, exist_ok=True)
-            os.symlink(hv_ckpts, i2v_ckpts)
-            print(f"  Model symlink created: {i2v_ckpts} -> {hv_ckpts}")
-
-        return str(i2v_ckpts) if i2v_ckpts.exists() else str(hv_ckpts)
-    except Exception as e:
-        print(f"  Model download error: {e}")
-        return None
+    print(f"  I2V model NOT found. Will be downloaded by download_models_if_needed()")
+    return str(i2v_ckpts)  # Return expected path, download_models_if_needed will handle it
 
 
 def generate_i2v(image_path: Path, prompt: str, output_path: Path, **kwargs) -> dict:
@@ -316,9 +326,9 @@ def generate_i2v(image_path: Path, prompt: str, output_path: Path, **kwargs) -> 
     except Exception as e:
         print(f"  Could not list models_root: {e}")
 
-    # HunyuanVideo-I2V uses --model-base not --models-root
-    # model_base should be the parent directory containing 'ckpts'
-    model_base = str(Path(models_root).parent) if models_root.endswith("ckpts") else models_root
+    # HunyuanVideo-I2V uses --model-base which should contain ckpts/ folder
+    # models_root is already ckpts path, so model_base is its parent
+    model_base = MODEL_BASE  # /runpod-volume/models/hunyuan - contains ckpts/
 
     cmd = [
         "python3", "/app/HunyuanVideo-I2V/sample_image2video.py",
@@ -499,15 +509,17 @@ def handler(job):
     print("=" * 60)
 
     try:
-        # Check disk space before starting
+        # Check disk space before starting (skip for cleanup and disk_check modes)
         disk = get_disk_usage()
         if disk:
             print(f"  Disk: {disk['free_gb']:.1f}GB free / {disk['total_gb']:.1f}GB total ({disk['used_percent']:.1f}% used)")
-            if disk['free_gb'] < 5:
+            # Only block if low disk AND not a maintenance mode
+            if disk['free_gb'] < 5 and mode not in ["cleanup", "disk_check"]:
                 return {"error": f"Low disk space: only {disk['free_gb']:.1f}GB free. Please clear the volume."}
 
-        # Download models if needed
-        download_models_if_needed(mode)
+        # Download models if needed (skip for maintenance modes)
+        if mode not in ["cleanup", "disk_check"]:
+            download_models_if_needed(mode)
 
         # Clean temp directory
         cleanup_temp_files()

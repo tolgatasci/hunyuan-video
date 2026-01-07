@@ -42,12 +42,10 @@ RUN git clone https://github.com/Tencent-Hunyuan/HunyuanVideo-I2V.git /app/Hunyu
     cd /app/HunyuanVideo-I2V && \
     pip install --no-cache-dir -r requirements.txt || true
 
-# Copy handler and startup script
+# Copy handler
 COPY handler.py /app/handler.py
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
 
 # Create directories
 RUN mkdir -p /app/temp /app/output
 
-CMD ["/app/start.sh"]
+CMD ["python3", "-u", "/app/handler.py"]
