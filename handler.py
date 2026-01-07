@@ -305,8 +305,9 @@ def generate_i2v(image_path: Path, prompt: str, output_path: Path, **kwargs) -> 
     """
 
     # Get parameters - defaults optimized for 3-second Shorts
+    # Note: (video_length - 1) must be multiple of 4, so valid values: 73, 77, 81, 85...
     resolution = kwargs.get("resolution", "540p")  # 540p for speed, 720p for quality
-    num_frames = kwargs.get("num_frames", 75)  # 3 seconds @ 25fps
+    num_frames = kwargs.get("num_frames", 77)  # ~3 seconds @ 25fps (77-1=76, divisible by 4)
     stability = kwargs.get("stability", True)
     flow_shift = kwargs.get("flow_shift", 7.0 if stability else 17.0)
     infer_steps = kwargs.get("infer_steps", 30)  # 30 for speed, 50 for quality
@@ -626,11 +627,13 @@ def handler(job):
 
             result = generate_i2v(
                 image_path, prompt, output_path,
-                resolution=job_input.get("resolution", "720p"),
+                resolution=job_input.get("resolution", "540p"),
+                num_frames=job_input.get("num_frames", 77),  # (77-1)=76 divisible by 4
                 stability=job_input.get("stability", True),
                 flow_shift=job_input.get("flow_shift", 7.0),
-                infer_steps=job_input.get("infer_steps", 50),
-                seed=job_input.get("seed", 42)
+                infer_steps=job_input.get("infer_steps", 30),  # 30 for speed
+                seed=job_input.get("seed", 42),
+                fps=job_input.get("fps", 25)
             )
 
         elif mode == "t2v":
