@@ -127,10 +127,11 @@ def download_models_if_needed(mode: str):
         if not i2v_model_file.exists():
             print("Downloading HunyuanVideo-I2V model from tencent/HunyuanVideo-I2V...")
             i2v_ckpts.mkdir(parents=True, exist_ok=True)
+            # Public repo - no token needed
             snapshot_download(
                 repo_id="tencent/HunyuanVideo-I2V",
                 local_dir=str(i2v_ckpts),
-                token=hf_token
+                token=None  # Public repo, no auth needed
             )
             print("I2V model downloaded!")
 
