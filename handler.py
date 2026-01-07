@@ -218,23 +218,113 @@ def generate_avatar(image_path: Path, audio_path: Path, output_path: Path, **kwa
     }
 
 
-def generate_i2v(image_path: Path, prompt: str, output_path: Path, **kwargs) -> dict:
-    """Generate video from image using HunyuanVideo-I2V"""
+def setup_i2v_models():
+    """Setup I2V models - download if needed, create symlinks"""
+    from huggingface_hub import snapshot_download
 
-    # Get parameters
-    resolution = kwargs.get("resolution", "720p")
+    hf_token = os.environ.get("HF_TOKEN")
+
+    # I2V models path
+    i2v_ckpts = Path(MODEL_BASE) / "ckpts"
+
+    # Check if models already exist
+    if i2v_ckpts.exists() and any(i2v_ckpts.iterdir()):
+        print(f"  I2V models found at: {i2v_ckpts}")
+        return str(i2v_ckpts)
+
+    # Check if Avatar ckpts exist (they have the base models)
+    avatar_ckpts = Path(MODEL_BASE) / "hunyuan-avatar" / "ckpts"
+    if avatar_ckpts.exists():
+        print(f"  Using Avatar models (symlink): {avatar_ckpts}")
+        # Create symlink
+        i2v_ckpts.parent.mkdir(parents=True, exist_ok=True)
+        if not i2v_ckpts.exists():
+            os.symlink(avatar_ckpts, i2v_ckpts)
+        return str(i2v_ckpts)
+
+    # Download HunyuanVideo base model
+    print("  Downloading HunyuanVideo base model for I2V...")
+    try:
+        download_path = snapshot_download(
+            repo_id="tencent/HunyuanVideo",
+            local_dir=str(Path(MODEL_BASE) / "hunyuan-video"),
+            token=hf_token,
+            ignore_patterns=["*.md", "*.txt"]
+        )
+
+        # Create symlink to ckpts
+        hv_ckpts = Path(download_path) / "ckpts"
+        if hv_ckpts.exists() and not i2v_ckpts.exists():
+            i2v_ckpts.parent.mkdir(parents=True, exist_ok=True)
+            os.symlink(hv_ckpts, i2v_ckpts)
+            print(f"  Model symlink created: {i2v_ckpts} -> {hv_ckpts}")
+
+        return str(i2v_ckpts) if i2v_ckpts.exists() else str(hv_ckpts)
+    except Exception as e:
+        print(f"  Model download error: {e}")
+        return None
+
+
+def generate_i2v(image_path: Path, prompt: str, output_path: Path, **kwargs) -> dict:
+    """Generate video from image using HunyuanVideo-I2V
+
+    Optimized for 3-second video generation (75 frames @ 25fps)
+    """
+
+    # Get parameters - defaults optimized for 3-second Shorts
+    resolution = kwargs.get("resolution", "540p")  # 540p for speed, 720p for quality
+    num_frames = kwargs.get("num_frames", 75)  # 3 seconds @ 25fps
     stability = kwargs.get("stability", True)
     flow_shift = kwargs.get("flow_shift", 7.0 if stability else 17.0)
-    infer_steps = kwargs.get("infer_steps", 50)
+    infer_steps = kwargs.get("infer_steps", 30)  # 30 for speed, 50 for quality
     seed = kwargs.get("seed", 42)
+    fps = kwargs.get("fps", 25)
+
+    # Setup and find models
+    models_root = setup_i2v_models()
+
+    if not models_root or not os.path.exists(models_root):
+        # Last resort - check all possible locations
+        possible_paths = [
+            f"{MODEL_BASE}/ckpts",
+            f"{MODEL_BASE}/hunyuan-avatar/ckpts",
+            f"{MODEL_BASE}/hunyuan-video/ckpts",
+            "/runpod-volume/ckpts",
+            "/runpod-volume/models/hunyuan/ckpts",
+            "/runpod-volume/models/hunyuan/hunyuan-video/ckpts"
+        ]
+
+        for path in possible_paths:
+            if os.path.exists(path):
+                models_root = path
+                print(f"  Found models at: {path}")
+                break
+
+    if not models_root or not os.path.exists(models_root):
+        return {"error": f"Models not found. Checked: {MODEL_BASE}/ckpts and alternatives. Please ensure models are downloaded."}
+
+    print(f"Running I2V generation (3-second optimized)...")
+    print(f"  Prompt: {prompt[:80]}...")
+    print(f"  Resolution: {resolution}, Frames: {num_frames} ({num_frames/fps:.1f}s @ {fps}fps)")
+    print(f"  Steps: {infer_steps}, Flow shift: {flow_shift}")
+    print(f"  Models root: {models_root}")
+
+    # List contents of models_root for debugging
+    try:
+        contents = list(Path(models_root).iterdir())
+        print(f"  Models root contents: {[c.name for c in contents[:10]]}")
+    except Exception as e:
+        print(f"  Could not list models_root: {e}")
 
     cmd = [
         "python3", "/app/HunyuanVideo-I2V/sample_image2video.py",
         "--model", "HYVideo-T/2",
+        "--models-root", models_root,
         "--prompt", prompt,
         "--i2v-mode",
         "--i2v-image-path", str(image_path),
         "--i2v-resolution", resolution,
+        "--video-length", str(num_frames),
         "--flow-shift", str(flow_shift),
         "--infer-steps", str(infer_steps),
         "--seed", str(seed),
@@ -248,30 +338,60 @@ def generate_i2v(image_path: Path, prompt: str, output_path: Path, **kwargs) -> 
     env = os.environ.copy()
     env["PYTHONPATH"] = "/app/HunyuanVideo-I2V"
 
-    print(f"Running I2V generation...")
-    print(f"Prompt: {prompt}")
+    # Important: Change working directory to parent of ckpts
+    work_dir = str(Path(models_root).parent)
+
+    print(f"  Command: python3 sample_image2video.py ...")
+    print(f"  Working dir: {work_dir}")
 
     start = time.time()
-    result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=3600)
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=work_dir,
+        timeout=600  # 10 min timeout for 3s video
+    )
     elapsed = time.time() - start
 
+    print(f"  Completed in {elapsed:.1f}s")
+
     if result.returncode != 0:
-        print(f"STDERR: {result.stderr}")
-        return {"error": f"I2V generation failed: {result.stderr}"}
+        print(f"STDOUT: {result.stdout[-2000:] if len(result.stdout) > 2000 else result.stdout}")
+        print(f"STDERR: {result.stderr[-2000:] if len(result.stderr) > 2000 else result.stderr}")
+        return {"error": f"I2V generation failed: {result.stderr[-500:]}"}
 
     # Find output video
     output_videos = list(OUTPUT_DIR.glob("*.mp4"))
     if not output_videos:
+        # Also check working directory
+        output_videos = list(Path(work_dir).glob("**/*.mp4"))
+
+    if not output_videos:
         return {"error": "No output video generated"}
 
-    output_video = output_videos[-1]
+    output_video = sorted(output_videos, key=lambda x: x.stat().st_mtime)[-1]  # Get latest
+    print(f"  Output video: {output_video}")
 
     with open(output_video, 'rb') as f:
         video_base64 = base64.b64encode(f.read()).decode('utf-8')
 
+    # Get actual video duration
+    try:
+        probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                     "-of", "default=noprint_wrappers=1:nokey=1", str(output_video)]
+        probe_result = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=10)
+        video_duration = float(probe_result.stdout.strip()) if probe_result.returncode == 0 else num_frames/fps
+    except:
+        video_duration = num_frames / fps
+
     return {
         "video_base64": video_base64,
-        "duration": elapsed,
+        "duration": video_duration,
+        "generation_time": elapsed,
+        "num_frames": num_frames,
+        "resolution": resolution,
         "output_path": str(output_video)
     }
 
@@ -287,8 +407,12 @@ def generate_t2v(prompt: str, output_path: Path, **kwargs) -> dict:
     cfg_scale = kwargs.get("cfg_scale", 6.0)
     seed = kwargs.get("seed", 42)
 
+    # Model path
+    models_root = f"{MODEL_BASE}/hunyuan-avatar/ckpts"
+
     cmd = [
         "python3", "/app/HunyuanVideo/sample_video.py",
+        "--model-base", models_root,
         "--video-size", str(height), str(width),
         "--video-length", str(video_length),
         "--infer-steps", str(infer_steps),
