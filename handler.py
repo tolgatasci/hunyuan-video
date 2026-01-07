@@ -147,7 +147,7 @@ def download_models_if_needed(mode: str):
             snapshot_download(
                 repo_id="tencent/HunyuanVideo-I2V",
                 local_dir=str(ckpts_path),
-                token=None
+                token=False  # Public repo - explicitly disable token to avoid cached expired token
             )
             print("I2V main model downloaded!")
 
@@ -157,7 +157,7 @@ def download_models_if_needed(mode: str):
             snapshot_download(
                 repo_id="xtuner/llava-llama-3-8b-v1_1-transformers",
                 local_dir=str(text_encoder_i2v),
-                token=None
+                token=False  # Public repo - explicitly disable token
             )
             print("LLaVA text encoder downloaded!")
 
@@ -167,7 +167,7 @@ def download_models_if_needed(mode: str):
             snapshot_download(
                 repo_id="openai/clip-vit-large-patch14",
                 local_dir=str(text_encoder_2),
-                token=None
+                token=False  # Public repo - explicitly disable token
             )
             print("CLIP text encoder downloaded!")
 
