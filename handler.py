@@ -316,10 +316,13 @@ def generate_i2v(image_path: Path, prompt: str, output_path: Path, **kwargs) -> 
     except Exception as e:
         print(f"  Could not list models_root: {e}")
 
+    # HunyuanVideo-I2V uses --model-base not --models-root
+    # model_base should be the parent directory containing 'ckpts'
+    model_base = str(Path(models_root).parent) if models_root.endswith("ckpts") else models_root
+
     cmd = [
         "python3", "/app/HunyuanVideo-I2V/sample_image2video.py",
-        "--model", "HYVideo-T/2",
-        "--models-root", models_root,
+        "--model-base", model_base,
         "--prompt", prompt,
         "--i2v-mode",
         "--i2v-image-path", str(image_path),
@@ -337,9 +340,10 @@ def generate_i2v(image_path: Path, prompt: str, output_path: Path, **kwargs) -> 
 
     env = os.environ.copy()
     env["PYTHONPATH"] = "/app/HunyuanVideo-I2V"
+    env["MODEL_BASE"] = model_base  # Also set as env var
 
-    # Important: Change working directory to parent of ckpts
-    work_dir = str(Path(models_root).parent)
+    # Working directory should be where the script can find models
+    work_dir = model_base
 
     print(f"  Command: python3 sample_image2video.py ...")
     print(f"  Working dir: {work_dir}")
